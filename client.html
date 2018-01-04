@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <title>Chat Server</title>
+    <meta charset="utf-8">
+    <link rel="stylesheet" type="text/css" href="client.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.2.1/jquery.min.js" type="text/javascript"></script>
+    <script src="/socket.io/socket.io.js"></script>
+  </head>
+
+  <body>
+    <div id="banner"></div>
+    <h1>Chat Server</h1>
+
+    <div class="loggedOut">
+      <p id="user_form">Enter a Username: </p>
+      <input type="text" id="username"/>
+      <button id="user_button" onclick="newUser()">Submit</button>
+    </div>
+
+    <div id="chatbar"></div>
+
+    <div class="loggedIn">
+      <span id="welcome"></span>
+    </div>
+
+    <div class="loggedIn">
+      <p id="chatroom_header">Chatrooms:</p>
+      <span id="chatrooms"></span>
+    </div>
+
+    <p id="display_users">All Users: </p>
+
+    <div id="user_bar">
+      <div class="loggedIn">
+        <p id="room_users">Users in Room:</p>
+        <span id="room_usernames"></span>
+      </div>
+    </div>
+
+    <div class="loggedIn">
+      <p id="create_chatroom">Create Chatroom: </p>
+      <input type="text" id="chat_input"/>
+      <div id="buttons">
+        <input type="radio" name="chatType" value="public" onclick="publicRoom()" checked>Public
+        <input type="radio" name="chatType" value="private" onclick="privateRoom()">Private<br>
+      </div>
+      <button id="chat_button" onclick="createChatroom()">Create</button>
+    </div>
+
+    <div class="private">
+      <label>Password: </label><input type="text" id="chat_password">
+    </div>
+
+    <div id="chatbox">
+      <div id="title_box">
+        <span id="title"></span>
+      </div>
+      <div id="chatlog"></div>
+    </div>
+
+    <div class="joinedRoom" id="boxes">
+      <input type="radio" name="format" value="**">B
+      <input type="radio" name="format" value="*">I
+    </div>
+
+    <div class="joinedRoom">
+      <input type=text id="message_input"/>
+      <button id="message_button" onclick="sendMessage()">send</button>
+    </div>
+
+    <!-- The next three lines creating were taken from https://www.w3schools.com/howto/howto_css_modals.asp -->
+    <!-- The Modal -->
+    <div id="myModal" class="modal">
+
+      <!-- Modal content -->
+      <div class="modal-content">
+        <span class="close">&times;</span>
+    <!-- Those three lines from https://www.w3schools.com/howto/howto_css_modals.asp end here -->
+
+        <div class = "is_creator">
+  	       <p>Interact with User!</p>
+           <input type="radio" name="remove" value="temp" checked>Temporarily kick out user<br>
+           <input type="radio" name="remove" value="ban">Permenantly ban user<br>
+           <button id="submit" onclick="removeUser()">Submit</button>
+         </div>
+
+        <div class="private_chat">
+  	       <p id="send_private_message">Send a private message:</p>
+           <br>
+           <br>
+           <div id="private_title_box"></div>
+           <span id="private_title"></span>
+           <div id="private_chatbox"></div>
+           <input type=text id="private_message_input"/>
+           <br>
+       	   <button id="private_button" onclick="privateMessage()">send</button>
+           <br>
+           <div id="private_chatlog"></div>
+        </div>
+      </div> <!-- closes modal content -->
+
+    </div> <!-- closes the modal -->
+
+  	<div id="sidebar">
+      <div id="usernames"></div>
+    </div>
+
+    <script type ="text/javascript">
+
+    /*---Variables and Classes---*/
+
+    var socketio = io.connect();
+    var welcome = document.getElementById("welcome");
+    var chatlog = document.getElementById("chatlog");
+    var formats = document.getElementsByName("format");
+    //The next two lines were taken from https://www.w3schools.com/howto/howto_css_modals.asp
+    var modal = document.getElementById("myModal");
+    var span = document.getElementsByClassName("close")[0];
+
+    var current_room_id = null;
+    var current_user;;
+    var is_creator = false;
+    var receiver_id;
+
+    $(".loggedIn").hide();
+    $(".loggedOut").show();
+    $(".private").hide();
+    $("#myModal").hide();
+    $(".is_creator").hide();
+    $(".private_chat").hide();
+    $(".joinedRoom").hide();
+
+    function User (username, id) {
+      this.username = username;
+      this.id = id;
+    }
+    function Chatroom (name, id, creator, password) {
+      this.name = name;
+      this.id = id;
+      this.creator = creator;
+      this.password = password;
+      this.members = [];
+      this.banned = [];
+      this.messages = [];
+    }
+    function Message(id, room_id, text, feature) {
+      this.id = id;
+      this.room_id = room_id;
+      this.text = text;
+      this.feature = feature;
+    }
+
+    function privateRoom() {
+      $(".private").show();
+    }
+
+    function publicRoom() {
+      $(".private").hide();
+    }
+
+    // the next two lines were taken from https://www.w3schools.com/howto/howto_css_modals.asp
+    span.onclick = function() {
+      modal.style.display = "none";
+    }
+
+    /*---These functions help update the client side---*/
+
+    function addRoom(room) {
+      var btn = document.createElement("BUTTON");
+      btn.setAttribute('data-chatroom_id', room.id);
+    	var has_password = 0;
+    	if(room.password != ""){
+    		has_password = 1;
+    	}
+    	btn.setAttribute('data-has_password', has_password);
+    	btn.innerHTML = room.name;
+    	btn.setAttribute('onclick','connectRoom(event)');
+      document.getElementById("chatrooms").appendChild(btn);
+      chatrooms.appendChild(document.createElement("br"));
+    	btn.className = "button";
+    	}
+
+
+    function updateMembers(members) {
+      var display_members = document.getElementById('room_usernames');
+      display_members.innerHTML = "";
+      for(var j = 0; j<members.length; j++){
+        var userBtn = document.createElement("BUTTON");
+        userBtn.setAttribute('data-receiver_id', members[j].id);
+        userBtn.innerText = members[j].username;
+        userBtn.className = "userButton";
+        userBtn.setAttribute('onclick', 'interactWithUser(event)');
+        display_members.appendChild(userBtn);
+        display_members.appendChild(document.createElement("br"));
+      }
+    }
+
+  	function interactWithUser(event) {
+      justcalled = true;
+      var receiver = event.target;
+      if(receiver.dataset.receiver_id==current_user.id) {
+        return;
+      }
+      if(is_creator) {
+        $(".is_creator").show();
+        $("#myModal").show();
+      }
+      $(".private_chat").show();
+      receiver_id = receiver.dataset.receiver_id;
+      //the next line was taken from https://www.w3schools.com/howto/howto_css_modals.asp
+      modal.style.display = "block";
+  	}
+
+    function clearInputs() {
+      inputs = document.getElementsByTagName('input');
+      for(var i=0; i<inputs.length; i++) {
+        if(inputs[i].type != "radio") {
+            inputs[i].value = "";
+        }
+        else if (inputs[i].value == "temp" || inputs[i].value == "public") {
+          inputs[i].checked = true;
+        }
+        else {
+          inputs[i].checked = false;
+        }
+      }
+    }
+
+    /*---These functions communicate with the server---*/
+
+    //create new user
+    function newUser(){
+      var username = document.getElementById("username").value;
+      var id = socketio.id;
+
+      var userBtn = document.createElement("BUTTON");
+       userBtn.setAttribute('data-receiver_id', id);
+       userBtn.setAttribute('data-receiver_name', username);
+       userBtn.innerHTML = username;
+       userBtn.className = "userButton";
+       userBtn.setAttribute('onclick', 'privateMessage(event)');
+       document.getElementById("usernames").appendChild(userBtn);
+       usernames.appendChild(document.createElement("br"));
+
+       socketio.emit("new_user", {username:username, id:id });
+    }
+
+    socketio.on("new_user", function(data) {
+      if(current_user==null){
+        current_user = data.new_user;
+        welcome.innerHTML = "Welcome " + current_user.username + "!";
+        var rooms = data.chatrooms
+        for(var i = 0; i<rooms.length; i++) {
+          addRoom(rooms[i]);
+        }
+        clearInputs();
+      }
+      var display_users = document.getElementById("usernames");
+      display_users.innerHTML = ""
+      for(var k = 0; k<data.users.length; k++) {
+        display_users.innerHTML += "" + data.users[k].username + "<br>";
+      }
+       $(".loggedIn").show();
+       $(".loggedOut").hide();
+    });
+
+    //create chatroom
+    function createChatroom(){
+  	var password = document.getElementById("chat_password").value;
+  	//get value of radio button
+  	var type;
+  	var radio_type = document.getElementsByName("chatType");
+  	for(var i=0; i<radio_type.length; i++) {
+  		if(radio_type[i].checked){
+  			type = radio_type[i].value;
+  			if(type == "private" && password == "") {
+  				alert("Private chatrooms require a password.");
+  				return;
+  			}
+  		}
+  	}
+       var chatroom_name = document.getElementById("chat_input").value;
+       var creator = current_user.username;
+       socketio.emit("new_chatroom", {chatroom_name:chatroom_name, creator:creator, password: password});
+
+     }
+
+    socketio.on("new_chatroom", function(data) {
+      addRoom(data.chatroom);
+      if(data.chatroom.creator.id == socketio.id) {
+        clearInputs();
+      }
+    });
+
+    //allow user to join a room
+    function connectRoom(event){
+      var data = event.target.dataset;
+      var password = "";
+      //if this is their first login
+      if(current_room_id == null) {
+          //if room is private
+          if(data.has_password==1) {
+              password = prompt("Please enter the password");
+          }
+          socketio.emit("join_room", {chatroom_id:data.chatroom_id, user:current_user, password:password});
+      }
+      else if (current_room_id != data.chatroom_id) {
+        if(data.has_password == 1) {
+            password = prompt("Please enter the password");
+        }
+        var old_room_id = current_room_id;
+        var new_room_id = data.chatroom_id;
+        socketio.emit("leave_room", {chatroom_id:old_room_id, user:current_user});
+        socketio.emit("join_room", {chatroom_id:new_room_id, user:current_user, password:password});
+      }
+    }
+
+    socketio.on("joined_room", function(data) {
+      $(".joinedRoom").show();
+      current_room_id = data.room_id;
+      if(data.joiner.id == current_user.id) {
+        is_creator = data.is_creator;
+        chatlog.innerHTML = "";
+        var messages = data.messages;
+        for(var i=0; i<messages.length; i++) {
+          chatlog.appendChild(document.createElement("hr"));
+          chatlog.innerHTML += messages[i].text;
+        }
+      }
+      document.getElementById("title").innerHTML = data.chatroom_name;
+      updateMembers(data.members);
+    });
+
+    //update if user leaves room
+    socketio.on("left_room", function(data) {
+      if(data.leaver.id != socketio.id) {
+        updateMembers(data.members);
+      }
+    });
+
+    //send message to a chatroom
+    function sendMessage(){
+       var msg = document.getElementById("message_input").value;
+       for(var i=0; i<formats.length; i++) {
+         if(formats[i].checked) {
+           var f = formats[i].value;
+           msg = f + msg + f;
+         }
+       }
+       msg = current_user.username + ": " + msg;
+       socketio.emit("message_to_server", {message:msg, chatroom_id:current_room_id, sender:current_user});
+     }
+
+    socketio.on("message_to_client",function(data) {
+       //Append an HR thematic break and the escaped HTML of the new message
+       var chatlog = document.getElementById("chatlog");
+       if(data.sender.id == socketio.id) {
+         clearInputs();
+       }
+       chatlog.appendChild(document.createElement("hr"));
+       chatlog.innerHTML += data.message; //data.sender.username + ": "
+     });
+
+    socketio.on("new_user", function(data) {
+      if(current_user==null && data.new_user != null && data.new_user.id == socketio.id) {
+        current_user = data.new_user;
+        welcome.innerHTML = "Welcome " + current_user.username + "!";
+        var rooms = data.chatrooms
+        for(var i = 0; i<rooms.length; i++) {
+          addRoom(rooms[i]);
+        }
+        clearInputs();
+      }
+      var display_users = document.getElementById("usernames");
+      display_users.innerHTML = ""
+      for(var k = 0; k<data.users.length; k++) {
+        display_users.innerHTML += "" + data.users[k].username + "<br>";
+      }
+  });
+
+    //send a message to another user
+    function privateMessage(){
+    	var privateMsg = document.getElementById("private_message_input").value;
+    	socketio.emit("private_message", {private_message:privateMsg, user_id:receiver_id, sender:current_user});
+      clearInputs();
+    }
+
+    socketio.on("message_to_user", function(data) {
+      //clear the modal
+      //The next line was taken from https://www.w3schools.com/howto/howto_css_modals.asp
+      modal.style.display = "none";
+      receiver_id = "";
+
+      //display the modal bar;
+      $(".private_chat").show();
+    	$("#myModal").show();
+      if(is_creator) {
+        $(".is_creator").show();
+      }
+      // The next line was taken from https://www.w3schools.com/howto/howto_css_modals.asp
+      modal.style.display = "block";
+
+      //set the receiver_id
+      receiver_id = data.sender.id;
+
+      //display the message
+    	var private_chatlog = document.getElementById("private_chatlog");
+    	//private_chatlog.appendChild(document.createElement("hr"));
+    	private_chatlog.innerHTML = data.sender.username + ": " + data.private_message;
+    });
+
+    //remove a user from a room (ban or temporarily kick out)
+    function removeUser(event) {
+      var btns = document.getElementsByName('remove');
+      var type_of_removal = btns[0].value;
+      if(btns[1].checked) {
+        type_of_removal = btns[1].value;
+      }
+      socketio.emit('remove_user', {user_id:receiver_id, chatroom_id:current_room_id, type_of_removal:type_of_removal});
+    }
+
+    socketio.on('removed', function(data) {
+      if(data.removed.id == socketio.id) {
+        document.getElementById("title").innerHTML = "";
+        document.getElementById('room_usernames').innerHTML = "";
+        chatlog.innerHTML = "";
+        current_room_id = null;
+        alert(data.message);
+      }
+      else {
+        updateMembers(data.members);
+      }
+    })
+
+    socketio.on('error', function(data) {
+      alert(data.message);
+    })
+
+    window.onbeforeunload = function(event) {
+      if(current_user!=null) {
+        socketio.emit("client_disconnected", {user:current_user, chatroom_id:current_room_id});
+      }
+    };
+
+    </script>
+
+   </body>
+</html>
